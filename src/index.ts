@@ -1,29 +1,31 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Bind resources to your worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
-
 import { handleChatRequest } from "./routes/chat";
+import {
+	jsonResponse,
+	optionsResponse,
+} from "./utils/response";
 
 interface LucyEnv extends Env {
 	OPENAI_API_KEY: string;
 }
 
-
 export default {
 	async fetch(request, env): Promise<Response> {
 		const url = new URL(request.url);
 
+		if (request.method === "OPTIONS") {
+			return optionsResponse(request);
+		}
+
 		if (url.pathname === "/") {
-			return Response.json({
+			if (request.method !== "GET") {
+				return jsonResponse(
+					request,
+					{ error: "Method not allowed" },
+					405,
+				);
+			}
+
+			return jsonResponse(request, {
 				status: "ok",
 				assistant: "Lucy",
 				message: "Lucy is alive!",
@@ -37,9 +39,10 @@ export default {
 			);
 		}
 
-		return Response.json(
+		return jsonResponse(
+			request,
 			{ error: "Not found" },
-			{ status: 404 },
+			404,
 		);
 	},
 } satisfies ExportedHandler<LucyEnv>;
