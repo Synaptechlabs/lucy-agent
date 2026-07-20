@@ -12,7 +12,7 @@ function getCorsHeaders(request: Request): HeadersInit {
 		"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 		"Access-Control-Allow-Headers": "Content-Type",
 		"Access-Control-Max-Age": "86400",
-		"Vary": "Origin",
+		Vary: "Origin",
 	};
 
 	if (origin && ALLOWED_ORIGINS.has(origin)) {
@@ -23,9 +23,10 @@ function getCorsHeaders(request: Request): HeadersInit {
 }
 
 export function jsonResponse(
-	request: Request,
 	body: unknown,
+	request: Request,
 	status = 200,
+	additionalHeaders: HeadersInit = {},
 ): Response {
 	return Response.json(body, {
 		status,
@@ -33,6 +34,7 @@ export function jsonResponse(
 			...getCorsHeaders(request),
 			"Cache-Control": "no-store",
 			"X-Content-Type-Options": "nosniff",
+			...additionalHeaders,
 		},
 	});
 }
@@ -42,8 +44,8 @@ export function optionsResponse(request: Request): Response {
 
 	if (!origin || !ALLOWED_ORIGINS.has(origin)) {
 		return jsonResponse(
-			request,
 			{ error: "Origin not allowed" },
+			request,
 			403,
 		);
 	}

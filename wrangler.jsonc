@@ -2,7 +2,9 @@
  * For more details on how to configure Wrangler, refer to:
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  */
-{
+
+ {
+
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "lucy-agent",
 	"main": "src/index.ts",
@@ -13,7 +15,19 @@
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"ratelimits": [
+		{
+			"name": "CHAT_RATE_LIMITER",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 20,
+				"period": 60
+			}
+		}
 	]
+
+	
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

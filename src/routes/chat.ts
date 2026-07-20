@@ -20,11 +20,11 @@ export async function handleChatRequest(
 
 	if (request.method !== "POST") {
 		return jsonResponse(
-			request,
 			{
 				error: "Method not allowed",
 				requestId,
 			},
+			request,
 			405,
 		);
 	}
@@ -33,11 +33,11 @@ export async function handleChatRequest(
 
 	if (!contentType?.includes("application/json")) {
 		return jsonResponse(
-			request,
 			{
 				error: "Content-Type must be application/json",
 				requestId,
 			},
+			request,
 			415,
 		);
 	}
@@ -50,11 +50,11 @@ export async function handleChatRequest(
 			body.message.trim().length === 0
 		) {
 			return jsonResponse(
-				request,
 				{
 					error: "A non-empty message is required",
 					requestId,
 				},
+				request,
 				400,
 			);
 		}
@@ -63,11 +63,11 @@ export async function handleChatRequest(
 
 		if (message.length > MAX_MESSAGE_LENGTH) {
 			return jsonResponse(
-				request,
 				{
 					error: `Message must not exceed ${MAX_MESSAGE_LENGTH} characters`,
 					requestId,
 				},
+				request,
 				413,
 			);
 		}
@@ -79,25 +79,28 @@ export async function handleChatRequest(
 		});
 
 		const reply = await generateReply(apiKey, message);
-		
+
 		console.log({
 			event: "chat_response",
 			requestId,
 			replyLength: reply.length,
 		});
 
-		return jsonResponse(request, {
-			reply,
-			requestId,
-		});
+		return jsonResponse(
+			{
+				reply,
+				requestId,
+			},
+			request,
+		);
 	} catch (error) {
 		if (error instanceof SyntaxError) {
 			return jsonResponse(
-				request,
 				{
 					error: "Request body contains invalid JSON",
 					requestId,
 				},
+				request,
 				400,
 			);
 		}
@@ -106,18 +109,18 @@ export async function handleChatRequest(
 			console.error({
 				event: "openai_error",
 				requestId,
-				openaiRequestId: error.request_id,
+				openaiRequestId: error.requestID,
 				status: error.status,
 				name: error.name,
 				message: error.message,
 			});
 
 			return jsonResponse(
-				request,
 				{
 					error: "Lucy is temporarily unavailable",
 					requestId,
 				},
+				request,
 				502,
 			);
 		}
@@ -132,11 +135,11 @@ export async function handleChatRequest(
 		});
 
 		return jsonResponse(
-			request,
 			{
 				error: "Lucy could not generate a response",
 				requestId,
 			},
+			request,
 			500,
 		);
 	}
