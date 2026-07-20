@@ -1,5 +1,6 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { handleChatRequest } from "../src/routes/chat";
 
 describe("Lucy Worker", () => {
 	it("returns Lucy's health status", async () => {
@@ -184,4 +185,48 @@ describe("Lucy Worker", () => {
 			"Message must not exceed 4000 characters",
 		);
 	});
+	it("returns a successful mocked Lucy response", async () => {
+	const fakeReplyGenerator = async (
+		apiKey: string,
+		message: string,
+	): Promise<string> => {
+		expect(apiKey).toBe("test-api-key");
+		expect(message).toBe("Who are you?");
+
+		return "I am Lucy.";
+	};
+
+	const request = new Request(
+		"https://example.com/chat",
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Origin: "http://localhost:5173",
+			},
+			body: JSON.stringify({
+				message: "Who are you?",
+			}),
+		},
+	);
+
+	const response = await handleChatRequest(
+		request,
+		"test-api-key",
+		fakeReplyGenerator,
+	);
+
+	expect(response.status).toBe(200);
+	expect(
+		response.headers.get("Access-Control-Allow-Origin"),
+	).toBe("http://localhost:5173");
+
+	const body = (await response.json()) as {
+		reply: string;
+		requestId: string;
+	};
+
+	expect(body.reply).toBe("I am Lucy.");
+	expect(body.requestId).toBeTypeOf("string");
+});
 });

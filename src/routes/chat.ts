@@ -6,9 +6,15 @@ import { jsonResponse } from "../utils/response";
 
 const MAX_MESSAGE_LENGTH = 4_000;
 
+type ReplyGenerator = (
+	apiKey: string,
+	message: string,
+) => Promise<string>;
+
 export async function handleChatRequest(
 	request: Request,
 	apiKey: string,
+	generateReply: ReplyGenerator = generateLucyReply,
 ): Promise<Response> {
 	const requestId = crypto.randomUUID();
 
@@ -72,8 +78,8 @@ export async function handleChatRequest(
 			messageLength: message.length,
 		});
 
-		const reply = await generateLucyReply(apiKey, message);
-
+		const reply = await generateReply(apiKey, message);
+		
 		console.log({
 			event: "chat_response",
 			requestId,
