@@ -11,15 +11,12 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-import OpenAI from "openai";
+import { handleChatRequest } from "./routes/chat";
 
 interface LucyEnv extends Env {
 	OPENAI_API_KEY: string;
 }
 
-interface ChatRequestBody {
-	message?: unknown;
-}
 
 export default {
 	async fetch(request, env): Promise<Response> {
@@ -34,51 +31,10 @@ export default {
 		}
 
 		if (url.pathname === "/chat") {
-			if (request.method !== "POST") {
-				return Response.json(
-					{ error: "POST required" },
-					{ status: 405 },
-				);
-			}
-
-			try {
-				const body = (await request.json()) as ChatRequestBody;
-
-				if (
-					typeof body.message !== "string" ||
-					body.message.trim().length === 0
-				) {
-					return Response.json(
-						{ error: "A non-empty message is required" },
-						{ status: 400 },
-					);
-				}
-
-				const openai = new OpenAI({
-					apiKey: env.OPENAI_API_KEY,
-				});
-
-				const response = await openai.responses.create({
-					model: "gpt-5.6-luna",
-					reasoning: {
-						effort: "low",
-					},
-					instructions:
-						"You are Lucy, a friendly and professional AI assistant. Keep your answers clear and concise.",
-					input: body.message.trim(),
-				});
-
-				return Response.json({
-					reply: response.output_text,
-				});
-			} catch (error) {
-				console.error("Lucy chat error:", error);
-
-				return Response.json(
-					{ error: "Lucy could not generate a response" },
-					{ status: 500 },
-				);
-			}
+			return handleChatRequest(
+				request,
+				env.OPENAI_API_KEY,
+			);
 		}
 
 		return Response.json(
