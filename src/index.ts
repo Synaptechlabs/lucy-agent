@@ -13,6 +13,43 @@
 
 export default {
 	async fetch(request, env, ctx): Promise<Response> {
-		return new Response("Hello World!");
+		const url = new URL(request.url);
+
+		if (url.pathname === "/") {
+			return Response.json({
+				status: "ok",
+				assistant: "Lucy",
+				message: "Lucy is alive!",
+			});
+		}
+
+		if (url.pathname === "/chat") {
+
+	if (request.method !== "POST") {
+		return Response.json(
+			{
+				error: "POST required",
+			},
+			{
+				status: 405,
+			},
+		);
+	}
+
+	const body = await request.json();
+
+	return Response.json({
+		reply: `You said: ${body.message}`,
+	});
+}
+
+		return Response.json(
+			{
+				error: "Not found",
+			},
+			{
+				status: 404,
+			},
+		);
 	},
 } satisfies ExportedHandler<Env>;
