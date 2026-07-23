@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import { generateLucyReply } from '../services/openai';
 import type { ChatRequestBody, LucyReply } from '../types';
 import { jsonResponse } from '../utils/response';
+import { verifyTurnstileToken } from '../utils/turnstile';
 
 const MAX_MESSAGE_LENGTH = 4_000;
 const MAX_RESPONSE_ID_LENGTH = 200;
@@ -15,6 +16,9 @@ const MAX_CONVERSATION_TURNS = 40;
 
 // Injected so tests can substitute a fake generator without hitting the OpenAI API.
 type ReplyGenerator = (apiKey: string, message: string, previousResponseId?: string) => Promise<LucyReply>;
+
+// Injected so tests can substitute a fake verifier without hitting Cloudflare's siteverify API.
+type TurnstileVerifier = (token: string, secretKey: string, remoteIp?: string) => Promise<boolean>;
 
 // Returns undefined when the client omitted the field (fresh conversation),
 // null when the value is present but malformed (caller should reject the request),
@@ -49,7 +53,9 @@ function parseTurnCount(value: unknown): number | undefined | null {
 export async function handleChatRequest(
 	request: Request,
 	apiKey: string,
+	turnstileSecretKey: string,
 	generateReply: ReplyGenerator = generateLucyReply,
+	verifyToken: TurnstileVerifier = verifyTurnstileToken,
 ): Promise<Response> {
 	const requestId = crypto.randomUUID();
 
@@ -101,6 +107,33 @@ export async function handleChatRequest(
 				},
 				request,
 				413,
+			);
+		}
+
+		if (typeof body.turnstileToken !== 'string' || body.turnstileToken.length === 0) {
+			return jsonResponse(
+				{
+					error: 'turnstileToken is required',
+					requestId,
+				},
+				request,
+				400,
+			);
+		}
+
+		const remoteIp = request.headers.get('CF-Connecting-IP') ?? undefined;
+		const humanVerified = await verifyToken(body.turnstileToken, turnstileSecretKey, remoteIp);
+
+		if (!humanVerified) {
+			console.warn({ event: 'turnstile_verification_failed', requestId });
+
+			return jsonResponse(
+				{
+					error: 'Turnstile verification failed',
+					requestId,
+				},
+				request,
+				403,
 			);
 		}
 

@@ -8,6 +8,10 @@ import { handleChatRequest } from '../src/routes/chat';
 // SELF.fetch POST /chat call below needs one of the allowed origins.
 const ORIGIN_HEADERS = { Origin: 'http://localhost:5173' };
 
+// Fake Turnstile verifier for tests that need to get past the bot check
+// without hitting Cloudflare's real siteverify endpoint.
+const alwaysVerified = async (): Promise<boolean> => true;
+
 describe('Lucy Worker', () => {
 	it("returns Lucy's health status", async () => {
 		const response = await SELF.fetch('https://example.com/');
@@ -215,10 +219,11 @@ describe('Lucy Worker', () => {
 			},
 			body: JSON.stringify({
 				message: 'Who are you?',
+				turnstileToken: 'test-token',
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', fakeReplyGenerator);
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyGenerator, alwaysVerified);
 
 		expect(response.status).toBe(200);
 		expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173');
@@ -257,10 +262,11 @@ describe('Lucy Worker', () => {
 			body: JSON.stringify({
 				message: 'What did I just ask?',
 				previousResponseId: 'resp_first',
+				turnstileToken: 'test-token',
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', fakeReplyGenerator);
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyGenerator, alwaysVerified);
 		const body = (await response.json()) as {
 			reply: string;
 			responseId: string;
@@ -269,6 +275,40 @@ describe('Lucy Worker', () => {
 		expect(response.status).toBe(200);
 		expect(body.reply).toBe('You asked who I am.');
 		expect(body.responseId).toBe('resp_second');
+	});
+
+	it('rejects a chat request with no Turnstile token', async () => {
+		const request = new Request('https://example.com/chat', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({ message: 'Hello' }),
+		});
+
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret');
+		const body = (await response.json()) as { error: string };
+
+		expect(response.status).toBe(400);
+		expect(body.error).toBe('turnstileToken is required');
+	});
+
+	it('rejects a chat request that fails Turnstile verification', async () => {
+		const neverVerified = async (): Promise<boolean> => false;
+
+		const request = new Request('https://example.com/chat', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({ message: 'Hello', turnstileToken: 'bad-token' }),
+		});
+
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, neverVerified);
+		const body = (await response.json()) as { error: string };
+
+		expect(response.status).toBe(403);
+		expect(body.error).toBe('Turnstile verification failed');
 	});
 
 	it('rejects an invalid previous response ID', async () => {
@@ -280,10 +320,11 @@ describe('Lucy Worker', () => {
 			body: JSON.stringify({
 				message: 'Continue our conversation',
 				previousResponseId: 'not-a-response-id',
+				turnstileToken: 'test-token',
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key');
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, alwaysVerified);
 		const body = (await response.json()) as {
 			error: string;
 		};
@@ -301,10 +342,11 @@ describe('Lucy Worker', () => {
 			body: JSON.stringify({
 				message: 'Hello',
 				turnCount: 'not-a-number',
+				turnstileToken: 'test-token',
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key');
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, alwaysVerified);
 		const body = (await response.json()) as { error: string };
 
 		expect(response.status).toBe(400);
@@ -321,10 +363,11 @@ describe('Lucy Worker', () => {
 				message: 'Hello',
 				previousResponseId: 'resp_first',
 				turnCount: 40,
+				turnstileToken: 'test-token',
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key');
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, alwaysVerified);
 		const body = (await response.json()) as { error: string };
 
 		expect(response.status).toBe(400);
@@ -346,10 +389,11 @@ describe('Lucy Worker', () => {
 				message: 'Hello',
 				previousResponseId: 'resp_first',
 				turnCount: 39,
+				turnstileToken: 'test-token',
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', fakeReplyGenerator);
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyGenerator, alwaysVerified);
 
 		expect(response.status).toBe(200);
 	});

@@ -5,6 +5,7 @@ import { checkChatRateLimit } from './utils/rate-limit';
 
 interface LucyEnv extends Env {
 	OPENAI_API_KEY: string;
+	TURNSTILE_SECRET_KEY: string;
 }
 
 export default {
@@ -60,8 +61,8 @@ export default {
 
 				// Rejects the request outright on a disallowed Origin, rather than
 				// just omitting the CORS header. This only stops naive non-browser
-				// callers (Origin is trivially spoofable) — it's cheap defense in
-				// depth, not real bot/abuse protection. See Turnstile follow-up.
+				// callers (Origin is trivially spoofable) — cheap defense in depth
+				// on top of the real check, Turnstile verification in handleChatRequest.
 				if (!isAllowedOrigin(request.headers.get('Origin'))) {
 					const requestId = crypto.randomUUID();
 
@@ -75,7 +76,7 @@ export default {
 			}
 
 			// Non-POST methods fall through to handleChatRequest, which returns 405.
-			return handleChatRequest(request, env.OPENAI_API_KEY);
+			return handleChatRequest(request, env.OPENAI_API_KEY, env.TURNSTILE_SECRET_KEY);
 		}
 
 		return jsonResponse({ error: 'Not found' }, request, 404);
