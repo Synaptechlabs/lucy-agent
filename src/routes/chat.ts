@@ -1,15 +1,31 @@
-import OpenAI from "openai";
+// POST /chat handler: validates the request, calls the OpenAI-backed reply
+// generator, and maps both expected and unexpected failures to safe HTTP responses.
+import OpenAI from 'openai';
 
-import { generateLucyReply } from "../services/openai";
-import type { ChatRequestBody } from "../types";
-import { jsonResponse } from "../utils/response";
+import { generateLucyReply } from '../services/openai';
+import type { ChatRequestBody, LucyReply } from '../types';
+import { jsonResponse } from '../utils/response';
 
 const MAX_MESSAGE_LENGTH = 4_000;
+const MAX_RESPONSE_ID_LENGTH = 200;
 
-type ReplyGenerator = (
-	apiKey: string,
-	message: string,
-) => Promise<string>;
+// Injected so tests can substitute a fake generator without hitting the OpenAI API.
+type ReplyGenerator = (apiKey: string, message: string, previousResponseId?: string) => Promise<LucyReply>;
+
+// Returns undefined when the client omitted the field (fresh conversation),
+// null when the value is present but malformed (caller should reject the request),
+// or the validated ID otherwise. OpenAI response IDs are always prefixed "resp_".
+function parsePreviousResponseId(value: unknown): string | undefined | null {
+	if (value === undefined) {
+		return undefined;
+	}
+
+	if (typeof value !== 'string' || value.length === 0 || value.length > MAX_RESPONSE_ID_LENGTH || !value.startsWith('resp_')) {
+		return null;
+	}
+
+	return value;
+}
 
 export async function handleChatRequest(
 	request: Request,
@@ -18,10 +34,10 @@ export async function handleChatRequest(
 ): Promise<Response> {
 	const requestId = crypto.randomUUID();
 
-	if (request.method !== "POST") {
+	if (request.method !== 'POST') {
 		return jsonResponse(
 			{
-				error: "Method not allowed",
+				error: 'Method not allowed',
 				requestId,
 			},
 			request,
@@ -29,12 +45,12 @@ export async function handleChatRequest(
 		);
 	}
 
-	const contentType = request.headers.get("Content-Type");
+	const contentType = request.headers.get('Content-Type');
 
-	if (!contentType?.includes("application/json")) {
+	if (!contentType?.includes('application/json')) {
 		return jsonResponse(
 			{
-				error: "Content-Type must be application/json",
+				error: 'Content-Type must be application/json',
 				requestId,
 			},
 			request,
@@ -45,13 +61,10 @@ export async function handleChatRequest(
 	try {
 		const body = (await request.json()) as ChatRequestBody;
 
-		if (
-			typeof body.message !== "string" ||
-			body.message.trim().length === 0
-		) {
+		if (typeof body.message !== 'string' || body.message.trim().length === 0) {
 			return jsonResponse(
 				{
-					error: "A non-empty message is required",
+					error: 'A non-empty message is required',
 					requestId,
 				},
 				request,
@@ -72,23 +85,41 @@ export async function handleChatRequest(
 			);
 		}
 
+		// The client returns the last response ID to continue a conversation.
+		// An omitted ID intentionally starts a fresh conversation.
+		const previousResponseId = parsePreviousResponseId(body.previousResponseId);
+
+		if (previousResponseId === null) {
+			return jsonResponse(
+				{
+					error: 'previousResponseId is invalid',
+					requestId,
+				},
+				request,
+				400,
+			);
+		}
+
 		console.log({
-			event: "chat_request",
+			event: 'chat_request',
 			requestId,
 			messageLength: message.length,
+			isConversationContinuation: previousResponseId !== undefined,
 		});
 
-		const reply = await generateReply(apiKey, message);
+		const reply = await generateReply(apiKey, message, previousResponseId);
 
 		console.log({
-			event: "chat_response",
+			event: 'chat_response',
 			requestId,
-			replyLength: reply.length,
+			replyLength: reply.text.length,
 		});
 
 		return jsonResponse(
 			{
-				reply,
+				reply: reply.text,
+				// Send this value back as previousResponseId on the next turn.
+				responseId: reply.responseId,
 				requestId,
 			},
 			request,
@@ -97,7 +128,7 @@ export async function handleChatRequest(
 		if (error instanceof SyntaxError) {
 			return jsonResponse(
 				{
-					error: "Request body contains invalid JSON",
+					error: 'Request body contains invalid JSON',
 					requestId,
 				},
 				request,
@@ -107,7 +138,7 @@ export async function handleChatRequest(
 
 		if (error instanceof OpenAI.APIError) {
 			console.error({
-				event: "openai_error",
+				event: 'openai_error',
 				requestId,
 				openaiRequestId: error.requestID,
 				status: error.status,
@@ -117,7 +148,7 @@ export async function handleChatRequest(
 
 			return jsonResponse(
 				{
-					error: "Lucy is temporarily unavailable",
+					error: 'Lucy is temporarily unavailable',
 					requestId,
 				},
 				request,
@@ -126,17 +157,14 @@ export async function handleChatRequest(
 		}
 
 		console.error({
-			event: "unexpected_error",
+			event: 'unexpected_error',
 			requestId,
-			error:
-				error instanceof Error
-					? error.message
-					: "Unknown error",
+			error: error instanceof Error ? error.message : 'Unknown error',
 		});
 
 		return jsonResponse(
 			{
-				error: "Lucy could not generate a response",
+				error: 'Lucy could not generate a response',
 				requestId,
 			},
 			request,
