@@ -2,8 +2,11 @@
 // that runs them. See the tool-calling loop in services/openai.ts.
 import type { FunctionTool } from 'openai/resources/responses/responses';
 
-const GITHUB_ORG = 'Synaptechlabs';
-const GITHUB_REPOS_URL = `https://api.github.com/orgs/${GITHUB_ORG}/repos?sort=updated&per_page=6&type=public`;
+// Synaptechlabs is a GitHub User account, not an Organization — the /orgs/
+// endpoint 404s for it, so this must use the /users/ repos endpoint instead.
+// Unauthenticated requests to it only ever return public repos.
+const GITHUB_USER = 'Synaptechlabs';
+const GITHUB_REPOS_URL = `https://api.github.com/users/${GITHUB_USER}/repos?sort=updated&per_page=6`;
 const MAX_LEAD_MESSAGE_LENGTH = 2_000;
 const MAX_CONTACT_METHOD_LENGTH = 500;
 
@@ -34,7 +37,7 @@ export const TOOLS: FunctionTool[] = [
 		type: 'function',
 		name: 'get_github_activity',
 		description:
-			"Fetch Scott's most recently updated public GitHub repositories (name, description, language, star count, last updated) from the Synaptechlabs GitHub org. Use this when asked about Scott's current or recent projects, what he's working on, or his GitHub activity — his bio alone goes stale, this doesn't.",
+			"Fetch Scott's most recently updated public GitHub repositories (name, description, language, star count, last updated) from his GitHub account. Use this when asked about Scott's current or recent projects, what he's working on, or his GitHub activity — his bio alone goes stale, this doesn't.",
 		strict: true,
 		parameters: {
 			type: 'object',

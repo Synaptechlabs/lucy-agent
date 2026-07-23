@@ -74,7 +74,7 @@ describe('get_github_activity tool', () => {
 		const parsed = JSON.parse(result);
 
 		expect(fakeFetch).toHaveBeenCalledWith(
-			'https://api.github.com/orgs/Synaptechlabs/repos?sort=updated&per_page=6&type=public',
+			'https://api.github.com/users/Synaptechlabs/repos?sort=updated&per_page=6',
 			expect.objectContaining({ headers: expect.objectContaining({ 'User-Agent': 'lucy-agent' }) }),
 		);
 		expect(parsed).toEqual([

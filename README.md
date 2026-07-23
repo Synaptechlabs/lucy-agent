@@ -117,7 +117,7 @@ API's tool-calling loop ([src/services/openai.ts](src/services/openai.ts),
 server-side — the `/chat` request/response contract above doesn't change,
 callers just see a (slightly slower) reply that used real data.
 
-- **`get_github_activity`**: fetches the `Synaptechlabs` GitHub org's most
+- **`get_github_activity`**: fetches Scott's `Synaptechlabs` GitHub account's most
   recently updated public repos (name, description, language, stars, last
   updated) from GitHub's public REST API, unauthenticated. Used when asked
   about Scott's current/recent projects, instead of relying on the static
