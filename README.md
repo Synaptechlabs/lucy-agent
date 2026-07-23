@@ -171,6 +171,16 @@ tools repeatedly can't turn one request into unbounded latency/cost.
   long for a synchronous chat request) — see
   [src/services/openai.ts](src/services/openai.ts).
 
+### Reasoning effort
+
+Reasoning effort is scaled to the message rather than fixed
+(`inferReasoningEffort` in [src/services/openai.ts](src/services/openai.ts)):
+short messages (≤6 words, e.g. "hi") get `low`, long ones (≥40 words) get
+`high`, everything else gets `medium`. Word count is a crude proxy for
+complexity, not a real one, but it beats paying for `medium` reasoning on
+every greeting. Effort is computed once from the user's message and reused
+across every tool round-trip within that turn.
+
 ### Conversation length
 
 `turnCount` is an opt-in cap enforced at 40 turns

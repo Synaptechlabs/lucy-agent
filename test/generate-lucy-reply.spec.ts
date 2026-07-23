@@ -2,7 +2,7 @@
 // a fake tool executor — never calls the real OpenAI or GitHub/Turnstile APIs.
 import { describe, expect, it, vi } from 'vitest';
 import type { Response as OpenAIResponse, ResponseInputItem } from 'openai/resources/responses/responses';
-import { generateLucyReply } from '../src/services/openai';
+import { generateLucyReply, inferReasoningEffort } from '../src/services/openai';
 
 function fakeResponse(overrides: Partial<OpenAIResponse>): OpenAIResponse {
 	return {
@@ -13,6 +13,22 @@ function fakeResponse(overrides: Partial<OpenAIResponse>): OpenAIResponse {
 		...overrides,
 	} as OpenAIResponse;
 }
+
+describe('inferReasoningEffort', () => {
+	it('returns low effort for short messages', () => {
+		expect(inferReasoningEffort('hi')).toBe('low');
+		expect(inferReasoningEffort('who are you?')).toBe('low');
+	});
+
+	it('returns medium effort for mid-length messages', () => {
+		expect(inferReasoningEffort('What has Scott been working on lately, in general terms?')).toBe('medium');
+	});
+
+	it('returns high effort for long messages', () => {
+		const longMessage = 'word '.repeat(40).trim();
+		expect(inferReasoningEffort(longMessage)).toBe('high');
+	});
+});
 
 describe('generateLucyReply tool-calling loop', () => {
 	it('returns the reply directly when the model calls no tools', async () => {
@@ -46,6 +62,12 @@ describe('generateLucyReply tool-calling loop', () => {
 		expect(secondCallParams.input).toEqual([
 			{ type: 'function_call_output', call_id: 'call_1', output: '[{"name":"lucy-agent"}]' },
 		] satisfies ResponseInputItem[]);
+
+		// Effort is computed once from the user's message and reused across
+		// every tool round-trip, not recomputed from tool output content.
+		const firstCallParams = createResponse.mock.calls[0][0];
+		expect(firstCallParams.reasoning.effort).toBe(inferReasoningEffort('What is Scott working on?'));
+		expect(secondCallParams.reasoning.effort).toBe(firstCallParams.reasoning.effort);
 	});
 
 	it('stops after MAX_TOOL_ROUNDS to avoid an unbounded loop', async () => {

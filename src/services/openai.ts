@@ -2,6 +2,7 @@
 // the function-calling loop for the tools defined in services/tools.ts.
 import OpenAI from 'openai';
 import type { Response, ResponseCreateParamsNonStreaming, ResponseInputItem } from 'openai/resources/responses/responses';
+import type { ReasoningEffort } from 'openai/resources/shared';
 
 import { LUCY_SYSTEM_PROMPT } from '../prompts/lucy';
 import type { LucyReply } from '../types';
@@ -23,16 +24,43 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // stuck calling tools repeatedly can't turn one request into unbounded cost.
 const MAX_TOOL_ROUNDS = 4;
 
+// Word-count thresholds for the reasoning effort heuristic below. Crude —
+// message length isn't the same as complexity — but far better than paying
+// for "medium" reasoning on every "hi" and "thanks".
+const LOW_EFFORT_MAX_WORDS = 6;
+const HIGH_EFFORT_MIN_WORDS = 40;
+
+// Scales reasoning effort to the message rather than using a fixed level for
+// every turn. Computed once from the user's message and reused for every
+// tool round-trip in that turn, not recomputed from tool output content.
+export function inferReasoningEffort(message: string): ReasoningEffort {
+	const wordCount = message.trim().split(/\s+/).filter(Boolean).length;
+
+	if (wordCount <= LOW_EFFORT_MAX_WORDS) {
+		return 'low';
+	}
+
+	if (wordCount >= HIGH_EFFORT_MIN_WORDS) {
+		return 'high';
+	}
+
+	return 'medium';
+}
+
 // Injected so tests can drive the tool-calling loop without hitting the real
 // OpenAI API — see the fake used in test/services/openai.spec.ts.
 export type ResponseCreator = (params: ResponseCreateParamsNonStreaming) => Promise<Response>;
 
-function buildRequestParams(input: string | ResponseInputItem[], previousResponseId?: string): ResponseCreateParamsNonStreaming {
+function buildRequestParams(
+	input: string | ResponseInputItem[],
+	effort: ReasoningEffort,
+	previousResponseId?: string,
+): ResponseCreateParamsNonStreaming {
 	return {
 		model: LUCY_MODEL,
 		max_output_tokens: MAX_OUTPUT_TOKENS,
 		reasoning: {
-			effort: 'medium',
+			effort,
 			// Preserve useful reasoning context when the client continues a chat.
 			context: 'all_turns',
 		},
@@ -52,7 +80,8 @@ export async function generateLucyReply(
 	createResponse: ResponseCreator = defaultCreateResponse(apiKey),
 	runTool: ToolExecutor = executeTool,
 ): Promise<LucyReply> {
-	let response = await createResponse(buildRequestParams(message, previousResponseId));
+	const effort = inferReasoningEffort(message);
+	let response = await createResponse(buildRequestParams(message, effort, previousResponseId));
 
 	for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
 		const functionCalls = response.output.filter((item) => item.type === 'function_call');
@@ -69,7 +98,7 @@ export async function generateLucyReply(
 			})),
 		);
 
-		response = await createResponse(buildRequestParams(toolOutputs, response.id));
+		response = await createResponse(buildRequestParams(toolOutputs, effort, response.id));
 	}
 
 	// Surfaces in logs if MAX_OUTPUT_TOKENS is cutting replies short, since a
