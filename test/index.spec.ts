@@ -12,6 +12,16 @@ const ORIGIN_HEADERS = { Origin: 'http://localhost:5173' };
 // without hitting Cloudflare's real siteverify endpoint.
 const alwaysVerified = async (): Promise<boolean> => true;
 
+// Reads a /chat SSE response body and parses each "data: {...}" event.
+async function readSseEvents(response: Response): Promise<Record<string, unknown>[]> {
+	const text = await response.text();
+
+	return text
+		.split('\n\n')
+		.filter((chunk) => chunk.startsWith('data: '))
+		.map((chunk) => JSON.parse(chunk.slice('data: '.length)));
+}
+
 describe('Lucy Worker', () => {
 	it("returns Lucy's health status", async () => {
 		const response = await SELF.fetch('https://example.com/');
@@ -195,21 +205,16 @@ describe('Lucy Worker', () => {
 
 		expect(body.error).toBe('Message must not exceed 4000 characters');
 	});
-	it('returns a successful mocked Lucy response', async () => {
-		const fakeReplyGenerator = async (
-			apiKey: string,
-			message: string,
-			previousResponseId?: string,
-		): Promise<{ text: string; responseId: string }> => {
+	it('returns a successful mocked streamed Lucy reply', async () => {
+		async function* fakeReplyStreamer(apiKey: string, message: string, previousResponseId?: string) {
 			expect(apiKey).toBe('test-api-key');
 			expect(message).toBe('Who are you?');
 			expect(previousResponseId).toBeUndefined();
 
-			return {
-				text: 'I am Lucy.',
-				responseId: 'resp_first',
-			};
-		};
+			yield { type: 'delta' as const, text: 'I am ' };
+			yield { type: 'delta' as const, text: 'Lucy.' };
+			yield { type: 'done' as const, responseId: 'resp_first' };
+		}
 
 		const request = new Request('https://example.com/chat', {
 			method: 'POST',
@@ -223,36 +228,29 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyGenerator, alwaysVerified);
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyStreamer, alwaysVerified);
 
 		expect(response.status).toBe(200);
+		expect(response.headers.get('Content-Type')).toBe('text/event-stream');
 		expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173');
 
-		const body = (await response.json()) as {
-			reply: string;
-			responseId: string;
-			requestId: string;
-		};
+		const events = await readSseEvents(response);
 
-		expect(body.reply).toBe('I am Lucy.');
-		expect(body.responseId).toBe('resp_first');
-		expect(body.requestId).toBeTypeOf('string');
+		expect(events).toEqual([
+			{ type: 'delta', text: 'I am ', requestId: expect.any(String) },
+			{ type: 'delta', text: 'Lucy.', requestId: expect.any(String) },
+			{ type: 'done', responseId: 'resp_first', requestId: expect.any(String) },
+		]);
 	});
 
 	it('continues a conversation using the previous response ID', async () => {
-		const fakeReplyGenerator = async (
-			_apiKey: string,
-			message: string,
-			previousResponseId?: string,
-		): Promise<{ text: string; responseId: string }> => {
+		async function* fakeReplyStreamer(_apiKey: string, message: string, previousResponseId?: string) {
 			expect(message).toBe('What did I just ask?');
 			expect(previousResponseId).toBe('resp_first');
 
-			return {
-				text: 'You asked who I am.',
-				responseId: 'resp_second',
-			};
-		};
+			yield { type: 'delta' as const, text: 'You asked who I am.' };
+			yield { type: 'done' as const, responseId: 'resp_second' };
+		}
 
 		const request = new Request('https://example.com/chat', {
 			method: 'POST',
@@ -266,15 +264,14 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyGenerator, alwaysVerified);
-		const body = (await response.json()) as {
-			reply: string;
-			responseId: string;
-		};
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyStreamer, alwaysVerified);
+		const events = await readSseEvents(response);
 
 		expect(response.status).toBe(200);
-		expect(body.reply).toBe('You asked who I am.');
-		expect(body.responseId).toBe('resp_second');
+		expect(events).toEqual([
+			{ type: 'delta', text: 'You asked who I am.', requestId: expect.any(String) },
+			{ type: 'done', responseId: 'resp_second', requestId: expect.any(String) },
+		]);
 	});
 
 	it('rejects a chat request with no Turnstile token', async () => {
@@ -375,10 +372,9 @@ describe('Lucy Worker', () => {
 	});
 
 	it('allows a conversation below the turn limit', async () => {
-		const fakeReplyGenerator = async (): Promise<{ text: string; responseId: string }> => ({
-			text: 'Still here.',
-			responseId: 'resp_next',
-		});
+		async function* fakeReplyStreamer() {
+			yield { type: 'done' as const, responseId: 'resp_next' };
+		}
 
 		const request = new Request('https://example.com/chat', {
 			method: 'POST',
@@ -393,7 +389,7 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyGenerator, alwaysVerified);
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyStreamer, alwaysVerified);
 
 		expect(response.status).toBe(200);
 	});

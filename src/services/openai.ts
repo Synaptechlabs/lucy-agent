@@ -1,11 +1,17 @@
-// Wraps the OpenAI Responses API call that powers Lucy's replies, including
-// the function-calling loop for the tools defined in services/tools.ts.
+// Wraps the OpenAI Responses API call that powers Lucy's replies: streams
+// text deltas as they arrive and runs the function-calling loop for the
+// tools defined in services/tools.ts transparently between rounds.
 import OpenAI from 'openai';
-import type { Response, ResponseCreateParamsNonStreaming, ResponseInputItem } from 'openai/resources/responses/responses';
+import type {
+	Response,
+	ResponseCreateParamsBase,
+	ResponseCreateParamsStreaming,
+	ResponseInputItem,
+	ResponseStreamEvent,
+} from 'openai/resources/responses/responses';
 import type { ReasoningEffort } from 'openai/resources/shared';
 
 import { LUCY_SYSTEM_PROMPT } from '../prompts/lucy';
-import type { LucyReply } from '../types';
 import { TOOLS, executeTool } from './tools';
 import type { ToolExecutor } from './tools';
 
@@ -47,15 +53,17 @@ export function inferReasoningEffort(message: string): ReasoningEffort {
 	return 'medium';
 }
 
+export type LucyStreamEvent = { type: 'delta'; text: string } | { type: 'done'; responseId: string };
+
 // Injected so tests can drive the tool-calling loop without hitting the real
-// OpenAI API — see the fake used in test/services/openai.spec.ts.
-export type ResponseCreator = (params: ResponseCreateParamsNonStreaming) => Promise<Response>;
+// OpenAI API — see the fake used in test/stream-lucy-reply.spec.ts.
+export type StreamCreator = (params: ResponseCreateParamsStreaming) => Promise<AsyncIterable<ResponseStreamEvent>>;
 
 function buildRequestParams(
 	input: string | ResponseInputItem[],
 	effort: ReasoningEffort,
 	previousResponseId?: string,
-): ResponseCreateParamsNonStreaming {
+): ResponseCreateParamsBase {
 	return {
 		model: LUCY_MODEL,
 		max_output_tokens: MAX_OUTPUT_TOKENS,
@@ -73,15 +81,54 @@ function buildRequestParams(
 	};
 }
 
-export async function generateLucyReply(
+// Consumes one streamed response: yields a delta event per text chunk and
+// returns (via the generator's return value, propagated through `yield*` in
+// the caller) the completed Response once the stream ends. `response.output`
+// on that completed Response carries any function_call items in full — no
+// need to separately accumulate response.function_call_arguments.delta events.
+async function* consumeStream(
+	createStream: StreamCreator,
+	params: ResponseCreateParamsStreaming,
+): AsyncGenerator<LucyStreamEvent, Response> {
+	const stream = await createStream(params);
+	let finalResponse: Response | undefined;
+
+	for await (const event of stream) {
+		if (event.type === 'response.output_text.delta') {
+			yield { type: 'delta', text: event.delta };
+		} else if (event.type === 'response.completed') {
+			finalResponse = event.response;
+		} else if (event.type === 'response.failed') {
+			throw new Error(`OpenAI response failed: ${event.response.error?.message ?? 'unknown error'}`);
+		}
+	}
+
+	if (!finalResponse) {
+		throw new Error('OpenAI stream ended without a completed response');
+	}
+
+	// Surfaces in logs if MAX_OUTPUT_TOKENS is cutting replies short, since a
+	// truncated reply otherwise looks identical to a normal one to the caller.
+	if (finalResponse.incomplete_details?.reason === 'max_output_tokens') {
+		console.warn({
+			event: 'openai_reply_truncated',
+			responseId: finalResponse.id,
+		});
+	}
+
+	return finalResponse;
+}
+
+export async function* streamLucyReply(
 	apiKey: string,
 	message: string,
 	previousResponseId?: string,
-	createResponse: ResponseCreator = defaultCreateResponse(apiKey),
+	createStream: StreamCreator = defaultCreateStream(apiKey),
 	runTool: ToolExecutor = executeTool,
-): Promise<LucyReply> {
+): AsyncGenerator<LucyStreamEvent> {
 	const effort = inferReasoningEffort(message);
-	let response = await createResponse(buildRequestParams(message, effort, previousResponseId));
+
+	let response = yield* consumeStream(createStream, { ...buildRequestParams(message, effort, previousResponseId), stream: true });
 
 	for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
 		const functionCalls = response.output.filter((item) => item.type === 'function_call');
@@ -98,25 +145,13 @@ export async function generateLucyReply(
 			})),
 		);
 
-		response = await createResponse(buildRequestParams(toolOutputs, effort, response.id));
+		response = yield* consumeStream(createStream, { ...buildRequestParams(toolOutputs, effort, response.id), stream: true });
 	}
 
-	// Surfaces in logs if MAX_OUTPUT_TOKENS is cutting replies short, since a
-	// truncated reply otherwise looks identical to a normal one to the caller.
-	if (response.incomplete_details?.reason === 'max_output_tokens') {
-		console.warn({
-			event: 'openai_reply_truncated',
-			responseId: response.id,
-		});
-	}
-
-	return {
-		text: response.output_text,
-		responseId: response.id,
-	};
+	yield { type: 'done', responseId: response.id };
 }
 
-function defaultCreateResponse(apiKey: string): ResponseCreator {
+function defaultCreateStream(apiKey: string): StreamCreator {
 	const openai = new OpenAI({ apiKey, timeout: REQUEST_TIMEOUT_MS });
 	return (params) => openai.responses.create(params);
 }

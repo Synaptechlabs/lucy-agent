@@ -9,10 +9,3 @@ export interface ChatRequestBody {
 	// Cloudflare Turnstile token proving a real browser sent this request.
 	turnstileToken?: unknown;
 }
-
-// Normalized result returned by the reply generator once OpenAI has responded.
-export interface LucyReply {
-	text: string;
-	// Echoed back to the client as previousResponseId to continue the conversation.
-	responseId: string;
-}

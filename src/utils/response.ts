@@ -46,6 +46,21 @@ export function jsonResponse(body: unknown, request: Request, status = 200, addi
 	});
 }
 
+// Wraps a Server-Sent Events body with the same CORS/caching headers as
+// jsonResponse. Always 200 — once streaming has started, errors are
+// communicated as an SSE event within the body, not an HTTP status change.
+export function streamResponse(body: ReadableStream<Uint8Array>, request: Request): Response {
+	return new Response(body, {
+		status: 200,
+		headers: {
+			...getCorsHeaders(request),
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-store',
+			'X-Content-Type-Options': 'nosniff',
+		},
+	});
+}
+
 // Handles CORS preflight (OPTIONS) requests: rejects unknown origins outright,
 // otherwise replies with an empty 204 carrying the allow headers.
 export function optionsResponse(request: Request): Response {

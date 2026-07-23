@@ -73,24 +73,53 @@ curl -X POST https://lucy-agent.lucy-agent.workers.dev/chat \
   }'
 ```
 
-Success response (`200`):
+**Success response is a stream, not a single JSON blob.** ⚠️ **Not yet
+deployed as of this writing** — see the warning at the bottom of this
+section before assuming the live Worker behaves this way.
 
-```json
-{
-  "reply": "I'm Lucy, ...",
-  "responseId": "resp_abc123",
-  "requestId": "8f045c93-..."
-}
+Once validation passes (message, Turnstile, Origin, rate limit, turn count —
+all checked synchronously, all still return the plain JSON errors below on
+failure), the response is `200` with `Content-Type: text/event-stream` and a
+body of newline-delimited [SSE](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
+events, each formatted as `data: <json>\n\n`:
+
+```
+data: {"type":"delta","text":"I'm ","requestId":"8f045c93-..."}
+
+data: {"type":"delta","text":"Lucy, ...","requestId":"8f045c93-..."}
+
+data: {"type":"done","responseId":"resp_abc123","requestId":"8f045c93-..."}
+
 ```
 
-Send `responseId` back as `previousResponseId` on the next turn to continue
-the conversation.
+Three event shapes:
+
+| `type`    | Fields                          | Meaning                                                                 |
+| --------- | -------------------------------- | ------------------------------------------------------------------------ |
+| `delta`   | `text`                          | An incremental chunk of the reply. Concatenate all `delta.text` in order to build the full reply. |
+| `done`    | `responseId`                    | Always the last event on success. Send `responseId` back as `previousResponseId` on the next turn. |
+| `error`   | `message`                       | Generation failed *after* the HTTP response already started (status is `200` regardless — see below). Stop reading, show `message` or a generic failure state. |
+
+Tool calls (see [Tools](#tools)) happen transparently between rounds of the
+underlying OpenAI call — the client only ever sees `delta` events for
+user-facing text, never anything tool-related, though there is a longer
+pause before the first `delta` on turns that trigger a tool.
+
+**Why `error` is an in-stream event and not an HTTP status**: by the time an
+OpenAI call fails, the response has already committed to `200` and
+`text/event-stream` — there's no HTTP-level way to retroactively change that.
+So generation-time failures (OpenAI API errors, unexpected exceptions) are
+reported as a final `{"type":"error"}` event instead of a `502`/`500`. Every
+*pre*-generation failure (bad input, failed auth, rate limit, etc.) still
+returns its original non-`200` JSON error exactly as before — only failures
+during the OpenAI call itself moved into the stream.
 
 #### Error responses
 
-All `/chat` errors are JSON: `{ "error": "...", "requestId": "..." }`.
-(`requestId` is only omitted on `/` and the `OPTIONS` preflight, which return
-plain `{ "error": "..." }` — those checks run before a request ID is minted.)
+Failures caught before generation starts are still plain JSON:
+`{ "error": "...", "requestId": "..." }`. (`requestId` is only omitted on `/`
+and the `OPTIONS` preflight, which return plain `{ "error": "..." }` — those
+checks run before a request ID is minted.)
 
 | Status | Condition                                                               |
 | ------ | ------------------------------------------------------------------------ |
@@ -106,8 +135,7 @@ plain `{ "error": "..." }` — those checks run before a request ID is minted.)
 | 400    | `turnCount` reached the conversation turn limit (see below)              |
 | 403    | `Origin` header missing or not in the allowlist (checked in `index.ts` before the request reaches `handleChatRequest`) |
 | 429    | Rate limit exceeded (20 requests / 60s per IP) — includes `Retry-After: 60` header |
-| 502    | Upstream OpenAI API error                                                |
-| 500    | Any other unexpected error                                               |
+| 200 + in-stream `error` event | Upstream OpenAI API error, or any other unexpected error during generation — see above |
 
 ## Tools
 
@@ -213,7 +241,7 @@ npm test          # vitest, runs against a local Workers runtime — never calls
 
 `.dev.vars` (not committed) holds both secrets above for `wrangler dev`.
 `npm test` doesn't need it — every test either short-circuits before the
-secrets would be used, or injects a fake reply generator / Turnstile
+secrets would be used, or injects a fake reply streamer / Turnstile
 verifier / tool executor / fetch in place of the real call, so the suite
 never makes a live OpenAI, Turnstile, or GitHub request.
 
@@ -228,3 +256,13 @@ contract (`turnstileToken` required, `Content-Type: application/json`,
 allowed `Origin` values) is enforced the moment this Worker deploys — if the
 live synaptechlabs.ai frontend doesn't already match it, the chat widget
 breaks immediately.
+
+**⚠️ Streaming is an additional, bigger breaking change, not yet deployed.**
+The streaming `/chat` response format described above (SSE instead of a
+single JSON blob) is built and tested but has **not shipped** as of this
+writing — the currently-deployed Worker still returns
+`{ "reply", "responseId", "requestId" }` as one JSON object. Deploying the
+streaming version requires the frontend to switch from `response.json()` to
+reading `response.body` as an SSE stream and concatenating `delta` events —
+same drill as the Turnstile rollout. Confirm the frontend is ready before
+running `wrangler deploy` with this change included.
