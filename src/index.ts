@@ -1,6 +1,6 @@
 // Cloudflare Worker entry point: routes requests to Lucy's health check and chat endpoints.
 import { handleChatRequest } from './routes/chat';
-import { jsonResponse, optionsResponse } from './utils/response';
+import { jsonResponse, optionsResponse, isAllowedOrigin } from './utils/response';
 import { checkChatRateLimit } from './utils/rate-limit';
 
 interface LucyEnv extends Env {
@@ -56,6 +56,21 @@ export default {
 							'Retry-After': '60',
 						},
 					);
+				}
+
+				// Rejects the request outright on a disallowed Origin, rather than
+				// just omitting the CORS header. This only stops naive non-browser
+				// callers (Origin is trivially spoofable) — it's cheap defense in
+				// depth, not real bot/abuse protection. See Turnstile follow-up.
+				if (!isAllowedOrigin(request.headers.get('Origin'))) {
+					const requestId = crypto.randomUUID();
+
+					console.warn('Chat request rejected: disallowed origin', {
+						requestId,
+						path: url.pathname,
+					});
+
+					return jsonResponse({ error: 'Origin not allowed', requestId }, request, 403);
 				}
 			}
 

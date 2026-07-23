@@ -3,6 +3,9 @@
 export interface ChatRequestBody {
 	message?: unknown;
 	previousResponseId?: unknown;
+	// Optional, client-tracked turn number for the current conversation chain.
+	// See MAX_CONVERSATION_TURNS in routes/chat.ts.
+	turnCount?: unknown;
 }
 
 // Normalized result returned by the reply generator once OpenAI has responded.

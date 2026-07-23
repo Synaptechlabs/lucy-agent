@@ -9,6 +9,12 @@ const ALLOWED_ORIGINS = new Set([
 	'https://www.synaptechlabs.ai',
 ]);
 
+// Exported so index.ts can reject a POST /chat outright on a disallowed
+// Origin, not just omit the CORS header that only a browser would honor.
+export function isAllowedOrigin(origin: string | null): boolean {
+	return origin !== null && ALLOWED_ORIGINS.has(origin);
+}
+
 function getCorsHeaders(request: Request): HeadersInit {
 	const origin = request.headers.get('Origin');
 
@@ -45,7 +51,7 @@ export function jsonResponse(body: unknown, request: Request, status = 200, addi
 export function optionsResponse(request: Request): Response {
 	const origin = request.headers.get('Origin');
 
-	if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+	if (!isAllowedOrigin(origin)) {
 		return jsonResponse({ error: 'Origin not allowed' }, request, 403);
 	}
 

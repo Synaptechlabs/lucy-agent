@@ -8,6 +8,10 @@ import { jsonResponse } from '../utils/response';
 
 const MAX_MESSAGE_LENGTH = 4_000;
 const MAX_RESPONSE_ID_LENGTH = 200;
+// Soft cap on conversation length. Enforced only when the client sends
+// turnCount (see parseTurnCount below), since Lucy is stateless and has no
+// server-side record of a conversation's history to check against otherwise.
+const MAX_CONVERSATION_TURNS = 40;
 
 // Injected so tests can substitute a fake generator without hitting the OpenAI API.
 type ReplyGenerator = (apiKey: string, message: string, previousResponseId?: string) => Promise<LucyReply>;
@@ -21,6 +25,21 @@ function parsePreviousResponseId(value: unknown): string | undefined | null {
 	}
 
 	if (typeof value !== 'string' || value.length === 0 || value.length > MAX_RESPONSE_ID_LENGTH || !value.startsWith('resp_')) {
+		return null;
+	}
+
+	return value;
+}
+
+// Same undefined/null/value contract as parsePreviousResponseId. A client
+// that never sends turnCount gets no cap enforced — this only protects
+// conversations from frontends that opt in by counting and sending it.
+function parseTurnCount(value: unknown): number | undefined | null {
+	if (value === undefined) {
+		return undefined;
+	}
+
+	if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
 		return null;
 	}
 
@@ -93,6 +112,30 @@ export async function handleChatRequest(
 			return jsonResponse(
 				{
 					error: 'previousResponseId is invalid',
+					requestId,
+				},
+				request,
+				400,
+			);
+		}
+
+		const turnCount = parseTurnCount(body.turnCount);
+
+		if (turnCount === null) {
+			return jsonResponse(
+				{
+					error: 'turnCount is invalid',
+					requestId,
+				},
+				request,
+				400,
+			);
+		}
+
+		if (turnCount !== undefined && turnCount >= MAX_CONVERSATION_TURNS) {
+			return jsonResponse(
+				{
+					error: 'This conversation has reached its turn limit. Please start a new one.',
 					requestId,
 				},
 				request,

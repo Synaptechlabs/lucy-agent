@@ -4,6 +4,10 @@ import { SELF } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { handleChatRequest } from '../src/routes/chat';
 
+// index.ts rejects POST /chat outright on a disallowed Origin, so every
+// SELF.fetch POST /chat call below needs one of the allowed origins.
+const ORIGIN_HEADERS = { Origin: 'http://localhost:5173' };
+
 describe('Lucy Worker', () => {
 	it("returns Lucy's health status", async () => {
 		const response = await SELF.fetch('https://example.com/');
@@ -78,9 +82,43 @@ describe('Lucy Worker', () => {
 		expect(body.requestId).toBeTypeOf('string');
 	});
 
+	it('rejects a chat request with no Origin header', async () => {
+		const response = await SELF.fetch('https://example.com/chat', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({ message: 'Hello' }),
+		});
+
+		expect(response.status).toBe(403);
+
+		const body = (await response.json()) as { error: string };
+
+		expect(body.error).toBe('Origin not allowed');
+	});
+
+	it('rejects a chat request from a disallowed Origin', async () => {
+		const response = await SELF.fetch('https://example.com/chat', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Origin: 'https://malicious.example',
+			},
+			body: JSON.stringify({ message: 'Hello' }),
+		});
+
+		expect(response.status).toBe(403);
+
+		const body = (await response.json()) as { error: string };
+
+		expect(body.error).toBe('Origin not allowed');
+	});
+
 	it('requires an application/json content type', async () => {
 		const response = await SELF.fetch('https://example.com/chat', {
 			method: 'POST',
+			headers: ORIGIN_HEADERS,
 			body: 'hello',
 		});
 
@@ -98,6 +136,7 @@ describe('Lucy Worker', () => {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
+				...ORIGIN_HEADERS,
 			},
 			body: '{"message":',
 		});
@@ -116,6 +155,7 @@ describe('Lucy Worker', () => {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
+				...ORIGIN_HEADERS,
 			},
 			body: JSON.stringify({
 				message: '   ',
@@ -136,6 +176,7 @@ describe('Lucy Worker', () => {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
+				...ORIGIN_HEADERS,
 			},
 			body: JSON.stringify({
 				message: 'a'.repeat(4_001),
@@ -249,5 +290,67 @@ describe('Lucy Worker', () => {
 
 		expect(response.status).toBe(400);
 		expect(body.error).toBe('previousResponseId is invalid');
+	});
+
+	it('rejects a non-integer turnCount', async () => {
+		const request = new Request('https://example.com/chat', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				message: 'Hello',
+				turnCount: 'not-a-number',
+			}),
+		});
+
+		const response = await handleChatRequest(request, 'test-api-key');
+		const body = (await response.json()) as { error: string };
+
+		expect(response.status).toBe(400);
+		expect(body.error).toBe('turnCount is invalid');
+	});
+
+	it('rejects a conversation that has reached the turn limit', async () => {
+		const request = new Request('https://example.com/chat', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				message: 'Hello',
+				previousResponseId: 'resp_first',
+				turnCount: 40,
+			}),
+		});
+
+		const response = await handleChatRequest(request, 'test-api-key');
+		const body = (await response.json()) as { error: string };
+
+		expect(response.status).toBe(400);
+		expect(body.error).toBe('This conversation has reached its turn limit. Please start a new one.');
+	});
+
+	it('allows a conversation below the turn limit', async () => {
+		const fakeReplyGenerator = async (): Promise<{ text: string; responseId: string }> => ({
+			text: 'Still here.',
+			responseId: 'resp_next',
+		});
+
+		const request = new Request('https://example.com/chat', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				message: 'Hello',
+				previousResponseId: 'resp_first',
+				turnCount: 39,
+			}),
+		});
+
+		const response = await handleChatRequest(request, 'test-api-key', fakeReplyGenerator);
+
+		expect(response.status).toBe(200);
 	});
 });
