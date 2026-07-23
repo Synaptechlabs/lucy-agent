@@ -111,7 +111,7 @@ plain `{ "error": "..." }` — those checks run before a request ID is minted.)
 
 ## Tools
 
-Lucy can call two function tools mid-conversation, via the OpenAI Responses
+Lucy can call three function tools mid-conversation, via the OpenAI Responses
 API's tool-calling loop ([src/services/openai.ts](src/services/openai.ts),
 [src/services/tools.ts](src/services/tools.ts)). This is entirely
 server-side — the `/chat` request/response contract above doesn't change,
@@ -124,6 +124,13 @@ callers just see a (slightly slower) reply that used real data.
   bio in the system prompt. Fails closed (returns a "not available right
   now" string the model can relay) on any HTTP error or network failure —
   never throws, never blocks the rest of the reply.
+- **`get_site_content`**: fetches and strips-to-text either synaptechlabs.ai's
+  `bio` page (career history, employers, education — much more detail than
+  the static prompt bio) or `home` page (current flagship project and full
+  project log with status tags). Same fail-closed behavior as the GitHub
+  tool. Only fetches those two known pages — it's not a crawler and doesn't
+  discover new pages on its own; if the site adds more pages worth exposing,
+  add them to `SITE_PAGES` in [src/services/tools.ts](src/services/tools.ts).
 - **`contact_scott`**: records a visitor's message and optional contact
   method when they want to get in touch. Currently **log-only** — it writes
   a structured `lead_captured` event visible via `wrangler tail` or the

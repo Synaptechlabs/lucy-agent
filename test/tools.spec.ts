@@ -106,6 +106,61 @@ describe('get_github_activity tool', () => {
 	});
 });
 
+describe('get_site_content tool', () => {
+	it('fetches the requested page and strips tags/scripts/styles', async () => {
+		const fakeFetch = vi.fn().mockResolvedValue(
+			new Response(
+				`<!DOCTYPE html><html><head><style>.x{color:red}</style><script>doStuff();</script></head>
+				<body><h1>Scott Douglass</h1><p>CTO &amp; mathematics graduate.</p></body></html>`,
+				{ status: 200 },
+			),
+		);
+
+		const result = await executeTool('get_site_content', JSON.stringify({ page: 'bio' }), fakeFetch as unknown as typeof fetch);
+
+		expect(fakeFetch).toHaveBeenCalledWith('https://synaptechlabs.ai/bio.html');
+		expect(result).toBe('Scott Douglass CTO & mathematics graduate.');
+		expect(result).not.toContain('doStuff');
+		expect(result).not.toContain('color:red');
+	});
+
+	it('fetches the home page URL for the "home" page', async () => {
+		const fakeFetch = vi.fn().mockResolvedValue(new Response('<p>Home content</p>', { status: 200 }));
+
+		await executeTool('get_site_content', JSON.stringify({ page: 'home' }), fakeFetch as unknown as typeof fetch);
+
+		expect(fakeFetch).toHaveBeenCalledWith('https://synaptechlabs.ai/');
+	});
+
+	it('rejects an unknown page value', async () => {
+		const result = await executeTool('get_site_content', JSON.stringify({ page: 'admin' }));
+
+		expect(result).toBe('Unknown page: admin. Valid pages are "home" and "bio".');
+	});
+
+	it('fails closed with a plain message on an HTTP error', async () => {
+		const fakeFetch = vi.fn().mockResolvedValue(new Response('', { status: 500 }));
+
+		const result = await executeTool('get_site_content', JSON.stringify({ page: 'bio' }), fakeFetch as unknown as typeof fetch);
+
+		expect(result).toBe('Site content is not available right now.');
+	});
+
+	it('fails closed when fetch itself throws', async () => {
+		const fakeFetch = vi.fn().mockRejectedValue(new Error('network down'));
+
+		const result = await executeTool('get_site_content', JSON.stringify({ page: 'home' }), fakeFetch as unknown as typeof fetch);
+
+		expect(result).toBe('Site content is not available right now.');
+	});
+
+	it('handles malformed JSON arguments gracefully', async () => {
+		const result = await executeTool('get_site_content', '{not json');
+
+		expect(result).toBe('Could not read the site content request — the request was malformed.');
+	});
+});
+
 describe('unknown tool', () => {
 	it('reports the tool name rather than throwing', async () => {
 		const result = await executeTool('not_a_real_tool', '{}');

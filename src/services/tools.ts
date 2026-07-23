@@ -9,6 +9,14 @@ const GITHUB_USER = 'Synaptechlabs';
 const GITHUB_REPOS_URL = `https://api.github.com/users/${GITHUB_USER}/repos?sort=updated&per_page=6`;
 const MAX_LEAD_MESSAGE_LENGTH = 2_000;
 const MAX_CONTACT_METHOD_LENGTH = 500;
+const MAX_SITE_CONTENT_LENGTH = 6_000;
+
+const SITE_PAGES = {
+	home: 'https://synaptechlabs.ai/',
+	bio: 'https://synaptechlabs.ai/bio.html',
+} as const;
+
+type SitePage = keyof typeof SITE_PAGES;
 
 export const TOOLS: FunctionTool[] = [
 	{
@@ -46,6 +54,25 @@ export const TOOLS: FunctionTool[] = [
 			additionalProperties: false,
 		},
 	},
+	{
+		type: 'function',
+		name: 'get_site_content',
+		description:
+			"Fetch the current text content of a page on synaptechlabs.ai. 'bio' has Scott's career history, employers, and education — richer and more detailed than the assistant's own bio summary. 'home' has the current flagship project and a project log with status tags (active, research, legacy, etc.) that goes beyond what get_github_activity returns. Use this for career/background questions or anything about current projects that the other tools and the bio above don't fully cover, since the live site may have been updated more recently than this prompt.",
+		strict: true,
+		parameters: {
+			type: 'object',
+			properties: {
+				page: {
+					type: 'string',
+					enum: ['home', 'bio'],
+					description: 'Which page to fetch.',
+				},
+			},
+			required: ['page'],
+			additionalProperties: false,
+		},
+	},
 ];
 
 interface ContactScottArgs {
@@ -70,6 +97,8 @@ export const executeTool: ToolExecutor = async (name, argumentsJson, fetchImpl =
 			return handleContactScott(argumentsJson);
 		case 'get_github_activity':
 			return handleGetGithubActivity(fetchImpl);
+		case 'get_site_content':
+			return handleGetSiteContent(argumentsJson, fetchImpl);
 		default:
 			return `Unknown tool: ${name}`;
 	}
@@ -137,4 +166,59 @@ async function handleGetGithubActivity(fetchImpl: typeof fetch): Promise<string>
 
 		return 'GitHub data is not available right now.';
 	}
+}
+
+async function handleGetSiteContent(argumentsJson: string, fetchImpl: typeof fetch): Promise<string> {
+	let args: { page?: unknown };
+
+	try {
+		args = JSON.parse(argumentsJson);
+	} catch {
+		return 'Could not read the site content request — the request was malformed.';
+	}
+
+	const page = args.page as string;
+
+	if (!isSitePage(page)) {
+		return `Unknown page: ${String(args.page)}. Valid pages are "home" and "bio".`;
+	}
+
+	try {
+		const response = await fetchImpl(SITE_PAGES[page]);
+
+		if (!response.ok) {
+			return 'Site content is not available right now.';
+		}
+
+		const html = await response.text();
+		return htmlToText(html).slice(0, MAX_SITE_CONTENT_LENGTH);
+	} catch (error) {
+		console.error({
+			event: 'site_content_fetch_error',
+			page,
+			error: error instanceof Error ? error.message : 'Unknown error',
+		});
+
+		return 'Site content is not available right now.';
+	}
+}
+
+function isSitePage(value: unknown): value is SitePage {
+	return typeof value === 'string' && value in SITE_PAGES;
+}
+
+// Strips scripts/styles first so their contents never leak into the text,
+// then strips remaining tags and decodes the handful of entities the site uses.
+function htmlToText(html: string): string {
+	return html
+		.replace(/<script[\s\S]*?<\/script>/gi, ' ')
+		.replace(/<style[\s\S]*?<\/style>/gi, ' ')
+		.replace(/<[^>]+>/g, ' ')
+		.replace(/&amp;/g, '&')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;/g, "'")
+		.replace(/\s+/g, ' ')
+		.trim();
 }
