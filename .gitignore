@@ -165,3 +165,6 @@ dist
 .env*
 !.env.example
 .wrangler/
+
+# personal notes, not for the repo
+interview*.txt
