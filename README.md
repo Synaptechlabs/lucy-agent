@@ -11,7 +11,8 @@ API.
 src/
   index.ts            Worker entry point: routing, rate limiting, Origin check
   routes/chat.ts       POST /chat: validation, Turnstile verification, OpenAI call
-  services/openai.ts   OpenAI Responses API wrapper (model, timeout, output cap)
+  services/openai.ts   OpenAI Responses API wrapper + tool-calling loop
+  services/tools.ts     Tool schemas and handlers Lucy can call mid-conversation
   prompts/lucy.ts      Lucy's system prompt
   utils/response.ts    CORS + shared JSON response helper
   utils/rate-limit.ts  Cloudflare native rate limiting
@@ -108,6 +109,33 @@ plain `{ "error": "..." }` — those checks run before a request ID is minted.)
 | 502    | Upstream OpenAI API error                                                |
 | 500    | Any other unexpected error                                               |
 
+## Tools
+
+Lucy can call two function tools mid-conversation, via the OpenAI Responses
+API's tool-calling loop ([src/services/openai.ts](src/services/openai.ts),
+[src/services/tools.ts](src/services/tools.ts)). This is entirely
+server-side — the `/chat` request/response contract above doesn't change,
+callers just see a (slightly slower) reply that used real data.
+
+- **`get_github_activity`**: fetches the `Synaptechlabs` GitHub org's most
+  recently updated public repos (name, description, language, stars, last
+  updated) from GitHub's public REST API, unauthenticated. Used when asked
+  about Scott's current/recent projects, instead of relying on the static
+  bio in the system prompt. Fails closed (returns a "not available right
+  now" string the model can relay) on any HTTP error or network failure —
+  never throws, never blocks the rest of the reply.
+- **`contact_scott`**: records a visitor's message and optional contact
+  method when they want to get in touch. Currently **log-only** — it writes
+  a structured `lead_captured` event visible via `wrangler tail` or the
+  Cloudflare dashboard's Logs view. There is no active notification (email,
+  etc.) wired up yet, so leads have to be checked manually; the prompt is
+  written to avoid Lucy claiming otherwise.
+
+Each tool round-trip costs an extra `responses.create` call; a single chat
+turn is capped at `MAX_TOOL_ROUNDS` (4) round-trips
+([src/services/openai.ts](src/services/openai.ts)) so a model stuck calling
+tools repeatedly can't turn one request into unbounded latency/cost.
+
 ## Security
 
 - **CORS allowlist**: `http://localhost:3000`, `http://localhost:5173`,
@@ -169,8 +197,8 @@ npm test          # vitest, runs against a local Workers runtime — never calls
 `.dev.vars` (not committed) holds both secrets above for `wrangler dev`.
 `npm test` doesn't need it — every test either short-circuits before the
 secrets would be used, or injects a fake reply generator / Turnstile
-verifier in place of the real API call, so the suite never makes a live
-OpenAI or Turnstile request.
+verifier / tool executor / fetch in place of the real call, so the suite
+never makes a live OpenAI, Turnstile, or GitHub request.
 
 ## Deployment
 
