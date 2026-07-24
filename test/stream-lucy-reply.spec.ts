@@ -52,6 +52,17 @@ describe('inferReasoningEffort', () => {
 		const longMessage = 'word '.repeat(40).trim();
 		expect(inferReasoningEffort(longMessage)).toBe('high');
 	});
+
+	it('returns high effort for a short message containing an email address', () => {
+		// A real incident: a short message handing over contact info ("I can be
+		// reached at x@y.com") got a "recorded" reply with no actual tool call.
+		// Forcing high effort here is the direct mitigation.
+		expect(inferReasoningEffort('reach me at scott.d@ieee.org')).toBe('high');
+	});
+
+	it('returns high effort for a short message containing a phone number', () => {
+		expect(inferReasoningEffort('call me on 555-123-4567')).toBe('high');
+	});
 });
 
 describe('streamLucyReply', () => {

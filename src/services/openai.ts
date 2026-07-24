@@ -36,10 +36,24 @@ const MAX_TOOL_ROUNDS = 4;
 const LOW_EFFORT_MAX_WORDS = 6;
 const HIGH_EFFORT_MIN_WORDS = 40;
 
+// A message that looks like it's handing over contact details (email or
+// phone) is very likely a reply to Lucy asking for them mid contact_scott
+// flow — exactly the turn that needs to reliably call the tool. Forcing
+// high effort here is a direct response to a real incident: a real lead's
+// contact info was "confirmed as recorded" without the tool ever being
+// called, so the message was silently lost. Not a full fix (the model can
+// still skip the tool call at any effort level) but meaningfully reduces
+// how often it happens on exactly the turn where it matters most.
+const CONTACT_INFO_PATTERN = /[\w.+-]+@[\w-]+\.[a-z]{2,}|\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/i;
+
 // Scales reasoning effort to the message rather than using a fixed level for
 // every turn. Computed once from the user's message and reused for every
 // tool round-trip in that turn, not recomputed from tool output content.
 export function inferReasoningEffort(message: string): ReasoningEffort {
+	if (CONTACT_INFO_PATTERN.test(message)) {
+		return 'high';
+	}
+
 	const wordCount = message.trim().split(/\s+/).filter(Boolean).length;
 
 	if (wordCount <= LOW_EFFORT_MAX_WORDS) {
