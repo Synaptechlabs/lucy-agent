@@ -1,7 +1,7 @@
 // End-to-end coverage of the Worker's routing (via SELF.fetch) plus focused
 // unit coverage of handleChatRequest's validation branches via a fake reply generator.
 import { SELF } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { handleChatRequest } from '../src/routes/chat';
 
 // index.ts rejects POST /chat outright on a disallowed Origin, so every
@@ -228,7 +228,14 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyStreamer, alwaysVerified);
+		const response = await handleChatRequest(
+			request,
+			'test-api-key',
+			'test-turnstile-secret',
+			undefined,
+			fakeReplyStreamer,
+			alwaysVerified,
+		);
 
 		expect(response.status).toBe(200);
 		expect(response.headers.get('Content-Type')).toBe('text/event-stream');
@@ -264,7 +271,14 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyStreamer, alwaysVerified);
+		const response = await handleChatRequest(
+			request,
+			'test-api-key',
+			'test-turnstile-secret',
+			undefined,
+			fakeReplyStreamer,
+			alwaysVerified,
+		);
 		const events = await readSseEvents(response);
 
 		expect(response.status).toBe(200);
@@ -290,6 +304,23 @@ describe('Lucy Worker', () => {
 		expect(body.error).toBe('turnstileToken is required');
 	});
 
+	it('logs a chat analytics event for a rejected request', async () => {
+		const writeDataPoint = vi.fn();
+		const analytics = { writeDataPoint } as unknown as AnalyticsEngineDataset;
+
+		const request = new Request('https://example.com/chat', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({ message: 'Hello' }),
+		});
+
+		await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', analytics);
+
+		expect(writeDataPoint).toHaveBeenCalledWith(expect.objectContaining({ indexes: ['missing_turnstile_token'] }));
+	});
+
 	it('rejects a chat request that fails Turnstile verification', async () => {
 		const neverVerified = async (): Promise<boolean> => false;
 
@@ -301,7 +332,7 @@ describe('Lucy Worker', () => {
 			body: JSON.stringify({ message: 'Hello', turnstileToken: 'bad-token' }),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, neverVerified);
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, undefined, neverVerified);
 		const body = (await response.json()) as { error: string };
 
 		expect(response.status).toBe(403);
@@ -321,7 +352,7 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, alwaysVerified);
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, undefined, alwaysVerified);
 		const body = (await response.json()) as {
 			error: string;
 		};
@@ -343,7 +374,7 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, alwaysVerified);
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, undefined, alwaysVerified);
 		const body = (await response.json()) as { error: string };
 
 		expect(response.status).toBe(400);
@@ -364,7 +395,7 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, alwaysVerified);
+		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, undefined, alwaysVerified);
 		const body = (await response.json()) as { error: string };
 
 		expect(response.status).toBe(400);
@@ -389,7 +420,14 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', fakeReplyStreamer, alwaysVerified);
+		const response = await handleChatRequest(
+			request,
+			'test-api-key',
+			'test-turnstile-secret',
+			undefined,
+			fakeReplyStreamer,
+			alwaysVerified,
+		);
 
 		expect(response.status).toBe(200);
 	});

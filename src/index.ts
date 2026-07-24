@@ -2,10 +2,12 @@
 import { handleChatRequest } from './routes/chat';
 import { jsonResponse, optionsResponse, isAllowedOrigin } from './utils/response';
 import { checkChatRateLimit } from './utils/rate-limit';
+import { logChatEvent } from './utils/analytics';
 
 interface LucyEnv extends Env {
 	OPENAI_API_KEY: string;
 	TURNSTILE_SECRET_KEY: string;
+	LUCY_ANALYTICS: AnalyticsEngineDataset;
 }
 
 export default {
@@ -45,6 +47,7 @@ export default {
 						requestId,
 						path: url.pathname,
 					});
+					logChatEvent(env.LUCY_ANALYTICS, request, 'rate_limited', requestId);
 
 					return jsonResponse(
 						{
@@ -70,13 +73,14 @@ export default {
 						requestId,
 						path: url.pathname,
 					});
+					logChatEvent(env.LUCY_ANALYTICS, request, 'origin_rejected', requestId);
 
 					return jsonResponse({ error: 'Origin not allowed', requestId }, request, 403);
 				}
 			}
 
 			// Non-POST methods fall through to handleChatRequest, which returns 405.
-			return handleChatRequest(request, env.OPENAI_API_KEY, env.TURNSTILE_SECRET_KEY);
+			return handleChatRequest(request, env.OPENAI_API_KEY, env.TURNSTILE_SECRET_KEY, env.LUCY_ANALYTICS);
 		}
 
 		return jsonResponse({ error: 'Not found' }, request, 404);

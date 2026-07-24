@@ -17,6 +17,7 @@ src/
   utils/response.ts    CORS + shared JSON response helper
   utils/rate-limit.ts  Cloudflare native rate limiting
   utils/turnstile.ts   Server-side Cloudflare Turnstile verification
+  utils/analytics.ts   Structured event logging to Workers Analytics Engine
   types.ts             Request/response shapes
 ```
 
@@ -229,6 +230,49 @@ Set via `wrangler secret put <NAME>` — never committed, never stored in
 | ----------------------- | ------------------------------------------------------ |
 | `OPENAI_API_KEY`        | Calling the OpenAI Responses API                       |
 | `TURNSTILE_SECRET_KEY`  | Verifying Turnstile tokens against Cloudflare's siteverify API |
+
+## Debugging: what happened to a specific request
+
+`console.log`/`console.warn`/`console.error` calls throughout the codebase
+are only visible via a **live** `wrangler tail lucy-agent` session — nothing
+retroactive. For "a user hit an error yesterday, what happened", that's
+useless after the fact. Two things fill that gap:
+
+**1. Analytics Engine events** ([src/utils/analytics.ts](src/utils/analytics.ts)) — every `/chat`
+request logs one structured event (outcome, requestId, country, colo) to the
+`lucy_chat_events` dataset, retained for **3 months** and queryable via SQL
+after the fact:
+
+```bash
+ACCOUNT_ID="<your Cloudflare account ID>"
+curl "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/analytics_engine/sql" \
+  -H "Authorization: Bearer <API token with Account Analytics Read>" \
+  --data "SELECT timestamp, blob1 AS outcome, blob2 AS requestId, blob3 AS country, blob4 AS colo
+          FROM lucy_chat_events
+          WHERE timestamp > NOW() - INTERVAL '1' DAY
+          ORDER BY timestamp DESC LIMIT 100"
+```
+
+Possible `outcome` values: `rate_limited`, `origin_rejected`,
+`invalid_content_type`, `invalid_json`, `empty_message`, `message_too_long`,
+`missing_turnstile_token`, `turnstile_failed`, `invalid_previous_response_id`,
+`invalid_turn_count`, `turn_limit_reached`, `stream_started`,
+`stream_completed`, `stream_error`. A `stream_started` with no matching
+`stream_completed`/`stream_error` for the same `requestId` means the client
+disconnected before the reply finished — not a Worker-side failure.
+
+**This only covers requests that actually reached the Worker.** If a user
+reports something like "unreachable" and there's no matching event at all
+around that time, the request likely never reached Cloudflare's edge —
+check DNS, ad blockers/privacy extensions (they can block the Turnstile
+challenge script or generic `*.workers.dev` subdomains), VPNs, or
+corporate/hotel network filtering before assuming it's a Lucy bug.
+
+**2. Cloudflare's GraphQL Analytics API** — for aggregate request
+volume/status over time (not per-request detail), query
+`workersInvocationsAdaptive` at `https://api.cloudflare.com/client/v4/graphql`
+with the same bearer token. Useful for "was the Worker even getting hit
+around that time" as a first sanity check.
 
 ## Local development
 

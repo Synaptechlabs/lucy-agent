@@ -25,6 +25,12 @@
 				"period": 60
 			}
 		}
+	],
+	"analytics_engine_datasets": [
+		{
+			"binding": "LUCY_ANALYTICS",
+			"dataset": "lucy_chat_events"
+		}
 	]
 
 	

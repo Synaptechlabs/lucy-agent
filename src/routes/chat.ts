@@ -8,6 +8,7 @@ import type { LucyStreamEvent } from '../services/openai';
 import type { ChatRequestBody } from '../types';
 import { jsonResponse, streamResponse } from '../utils/response';
 import { verifyTurnstileToken } from '../utils/turnstile';
+import { logChatEvent } from '../utils/analytics';
 
 const MAX_MESSAGE_LENGTH = 4_000;
 const MAX_RESPONSE_ID_LENGTH = 200;
@@ -59,7 +60,12 @@ function formatSseEvent(payload: unknown): string {
 // Turns the reply stream into SSE bytes. Errors here happen after we've
 // already committed to a 200 response, so they're reported as an in-stream
 // {"type":"error"} event rather than an HTTP status — see streamResponse.
-function buildSseStream(events: AsyncGenerator<LucyStreamEvent>, requestId: string): ReadableStream<Uint8Array> {
+function buildSseStream(
+	events: AsyncGenerator<LucyStreamEvent>,
+	requestId: string,
+	request: Request,
+	analytics: AnalyticsEngineDataset | undefined,
+): ReadableStream<Uint8Array> {
 	const encoder = new TextEncoder();
 
 	return new ReadableStream<Uint8Array>({
@@ -68,7 +74,10 @@ function buildSseStream(events: AsyncGenerator<LucyStreamEvent>, requestId: stri
 				for await (const event of events) {
 					controller.enqueue(encoder.encode(formatSseEvent({ ...event, requestId })));
 				}
+				logChatEvent(analytics, request, 'stream_completed', requestId);
 			} catch (error) {
+				logChatEvent(analytics, request, 'stream_error', requestId);
+
 				if (error instanceof OpenAI.APIError) {
 					console.error({
 						event: 'openai_error',
@@ -100,6 +109,7 @@ export async function handleChatRequest(
 	request: Request,
 	apiKey: string,
 	turnstileSecretKey: string,
+	analytics: AnalyticsEngineDataset | undefined = undefined,
 	streamReply: ReplyStreamer = streamLucyReply,
 	verifyToken: TurnstileVerifier = verifyTurnstileToken,
 ): Promise<Response> {
@@ -112,6 +122,7 @@ export async function handleChatRequest(
 	const contentType = request.headers.get('Content-Type');
 
 	if (!contentType?.includes('application/json')) {
+		logChatEvent(analytics, request, 'invalid_content_type', requestId);
 		return jsonResponse({ error: 'Content-Type must be application/json', requestId }, request, 415);
 	}
 
@@ -120,20 +131,24 @@ export async function handleChatRequest(
 	try {
 		body = (await request.json()) as ChatRequestBody;
 	} catch {
+		logChatEvent(analytics, request, 'invalid_json', requestId);
 		return jsonResponse({ error: 'Request body contains invalid JSON', requestId }, request, 400);
 	}
 
 	if (typeof body.message !== 'string' || body.message.trim().length === 0) {
+		logChatEvent(analytics, request, 'empty_message', requestId);
 		return jsonResponse({ error: 'A non-empty message is required', requestId }, request, 400);
 	}
 
 	const message = body.message.trim();
 
 	if (message.length > MAX_MESSAGE_LENGTH) {
+		logChatEvent(analytics, request, 'message_too_long', requestId);
 		return jsonResponse({ error: `Message must not exceed ${MAX_MESSAGE_LENGTH} characters`, requestId }, request, 413);
 	}
 
 	if (typeof body.turnstileToken !== 'string' || body.turnstileToken.length === 0) {
+		logChatEvent(analytics, request, 'missing_turnstile_token', requestId);
 		return jsonResponse({ error: 'turnstileToken is required', requestId }, request, 400);
 	}
 
@@ -142,6 +157,7 @@ export async function handleChatRequest(
 
 	if (!humanVerified) {
 		console.warn({ event: 'turnstile_verification_failed', requestId });
+		logChatEvent(analytics, request, 'turnstile_failed', requestId);
 
 		return jsonResponse({ error: 'Turnstile verification failed', requestId }, request, 403);
 	}
@@ -151,16 +167,19 @@ export async function handleChatRequest(
 	const previousResponseId = parsePreviousResponseId(body.previousResponseId);
 
 	if (previousResponseId === null) {
+		logChatEvent(analytics, request, 'invalid_previous_response_id', requestId);
 		return jsonResponse({ error: 'previousResponseId is invalid', requestId }, request, 400);
 	}
 
 	const turnCount = parseTurnCount(body.turnCount);
 
 	if (turnCount === null) {
+		logChatEvent(analytics, request, 'invalid_turn_count', requestId);
 		return jsonResponse({ error: 'turnCount is invalid', requestId }, request, 400);
 	}
 
 	if (turnCount !== undefined && turnCount >= MAX_CONVERSATION_TURNS) {
+		logChatEvent(analytics, request, 'turn_limit_reached', requestId);
 		return jsonResponse({ error: 'This conversation has reached its turn limit. Please start a new one.', requestId }, request, 400);
 	}
 
@@ -170,8 +189,9 @@ export async function handleChatRequest(
 		messageLength: message.length,
 		isConversationContinuation: previousResponseId !== undefined,
 	});
+	logChatEvent(analytics, request, 'stream_started', requestId);
 
 	const events = streamReply(apiKey, message, previousResponseId);
 
-	return streamResponse(buildSseStream(events, requestId), request);
+	return streamResponse(buildSseStream(events, requestId, request, analytics), request);
 }
