@@ -253,6 +253,10 @@ curl "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/analytics_engine
           ORDER BY timestamp DESC LIMIT 100"
 ```
 
+Verified working end to end 2026-07-24 — expect roughly **10-15 seconds** of
+ingestion lag between a request happening and it showing up in a query;
+querying immediately after triggering a request will likely show 0 rows.
+
 Possible `outcome` values: `rate_limited`, `origin_rejected`,
 `invalid_content_type`, `invalid_json`, `empty_message`, `message_too_long`,
 `missing_turnstile_token`, `turnstile_failed`, `invalid_previous_response_id`,
