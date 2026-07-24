@@ -11,6 +11,11 @@ const MAX_LEAD_MESSAGE_LENGTH = 2_000;
 const MAX_CONTACT_METHOD_LENGTH = 500;
 const MAX_SITE_CONTENT_LENGTH = 6_000;
 
+// Branding-only — appears in the "From" header of every lead notification
+// email, not a secret. The actual send credentials are ResendConfig below.
+const RESEND_FROM_EMAIL = 'lucy@mail.uvw.io';
+const RESEND_API_URL = 'https://api.resend.com/emails';
+
 const SITE_PAGES = {
 	home: 'https://synaptechlabs.ai/',
 	bio: 'https://synaptechlabs.ai/bio.html',
@@ -80,6 +85,13 @@ interface ContactScottArgs {
 	contactMethod?: unknown;
 }
 
+// Injected so the real Resend credentials only flow through Worker secrets,
+// never a default/hardcoded value — see makeToolExecutor below.
+export interface ResendConfig {
+	apiKey: string;
+	toEmail: string;
+}
+
 interface GithubRepo {
 	name: string;
 	description: string | null;
@@ -91,20 +103,29 @@ interface GithubRepo {
 
 export type ToolExecutor = (name: string, argumentsJson: string, fetchImpl?: typeof fetch) => Promise<string>;
 
-export const executeTool: ToolExecutor = async (name, argumentsJson, fetchImpl = fetch) => {
-	switch (name) {
-		case 'contact_scott':
-			return handleContactScott(argumentsJson);
-		case 'get_github_activity':
-			return handleGetGithubActivity(fetchImpl);
-		case 'get_site_content':
-			return handleGetSiteContent(argumentsJson, fetchImpl);
-		default:
-			return `Unknown tool: ${name}`;
-	}
-};
+// Builds a tool executor bound to a specific Resend config (or none, for
+// tests and any environment where the secrets aren't set — contact_scott
+// still logs the lead either way, email is additive, never a replacement).
+export function makeToolExecutor(resendConfig: ResendConfig | undefined): ToolExecutor {
+	return async (name, argumentsJson, fetchImpl = fetch) => {
+		switch (name) {
+			case 'contact_scott':
+				return handleContactScott(argumentsJson, resendConfig, fetchImpl);
+			case 'get_github_activity':
+				return handleGetGithubActivity(fetchImpl);
+			case 'get_site_content':
+				return handleGetSiteContent(argumentsJson, fetchImpl);
+			default:
+				return `Unknown tool: ${name}`;
+		}
+	};
+}
 
-function handleContactScott(argumentsJson: string): string {
+// The no-Resend-config executor — used as the default everywhere a caller
+// doesn't have (or care about) real send credentials.
+export const executeTool: ToolExecutor = makeToolExecutor(undefined);
+
+async function handleContactScott(argumentsJson: string, resendConfig: ResendConfig | undefined, fetchImpl: typeof fetch): Promise<string> {
 	let args: ContactScottArgs;
 
 	try {
@@ -117,16 +138,58 @@ function handleContactScott(argumentsJson: string): string {
 		return 'No message was provided to record.';
 	}
 
-	// Visible in Cloudflare's Worker logs / `wrangler tail` — no email or
-	// storage wired up yet, this is the lead-capture MVP.
+	const message = args.message.trim().slice(0, MAX_LEAD_MESSAGE_LENGTH);
+	const contactMethod = typeof args.contactMethod === 'string' ? args.contactMethod.trim().slice(0, MAX_CONTACT_METHOD_LENGTH) : null;
+
+	// The guaranteed record — visible in Cloudflare's Worker logs / `wrangler
+	// tail` and queryable via Analytics Engine, regardless of whether the
+	// email below succeeds, fails, or was never configured.
 	console.log({
 		event: 'lead_captured',
-		message: args.message.trim().slice(0, MAX_LEAD_MESSAGE_LENGTH),
-		contactMethod: typeof args.contactMethod === 'string' ? args.contactMethod.trim().slice(0, MAX_CONTACT_METHOD_LENGTH) : null,
+		message,
+		contactMethod,
 		timestamp: new Date().toISOString(),
 	});
 
+	if (resendConfig) {
+		await sendLeadEmail(resendConfig, message, contactMethod, fetchImpl);
+	}
+
 	return 'The message has been recorded.';
+}
+
+// Best-effort notification on top of the log above — a failure here is
+// logged but never thrown, and never changes what the model tells the visitor.
+async function sendLeadEmail(
+	resendConfig: ResendConfig,
+	message: string,
+	contactMethod: string | null,
+	fetchImpl: typeof fetch,
+): Promise<void> {
+	try {
+		const response = await fetchImpl(RESEND_API_URL, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${resendConfig.apiKey}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				from: RESEND_FROM_EMAIL,
+				to: resendConfig.toEmail,
+				subject: 'New Lucy chat lead',
+				text: `Message: ${message}\n\nContact: ${contactMethod ?? 'not provided'}`,
+			}),
+		});
+
+		if (!response.ok) {
+			console.error({ event: 'lead_email_send_failed', status: response.status });
+		}
+	} catch (error) {
+		console.error({
+			event: 'lead_email_send_error',
+			error: error instanceof Error ? error.message : 'Unknown error',
+		});
+	}
 }
 
 async function handleGetGithubActivity(fetchImpl: typeof fetch): Promise<string> {

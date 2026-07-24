@@ -9,6 +9,8 @@ import type { ChatRequestBody } from '../types';
 import { jsonResponse, streamResponse } from '../utils/response';
 import { verifyTurnstileToken } from '../utils/turnstile';
 import { logChatEvent } from '../utils/analytics';
+import { makeToolExecutor } from '../services/tools';
+import type { ResendConfig } from '../services/tools';
 
 const MAX_MESSAGE_LENGTH = 4_000;
 const MAX_RESPONSE_ID_LENGTH = 200;
@@ -109,8 +111,12 @@ export async function handleChatRequest(
 	request: Request,
 	apiKey: string,
 	turnstileSecretKey: string,
+	resendConfig: ResendConfig | undefined = undefined,
 	analytics: AnalyticsEngineDataset | undefined = undefined,
-	streamReply: ReplyStreamer = streamLucyReply,
+	// Defaulted here (rather than inside streamLucyReply) so resendConfig can
+	// be closed over — the contact_scott tool needs it, nothing else does.
+	streamReply: ReplyStreamer = (streamApiKey, message, previousResponseId) =>
+		streamLucyReply(streamApiKey, message, previousResponseId, undefined, makeToolExecutor(resendConfig)),
 	verifyToken: TurnstileVerifier = verifyTurnstileToken,
 ): Promise<Response> {
 	const requestId = crypto.randomUUID();

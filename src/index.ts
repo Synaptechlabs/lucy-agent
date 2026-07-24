@@ -3,11 +3,14 @@ import { handleChatRequest } from './routes/chat';
 import { jsonResponse, optionsResponse, isAllowedOrigin } from './utils/response';
 import { checkChatRateLimit } from './utils/rate-limit';
 import { logChatEvent } from './utils/analytics';
+import type { ResendConfig } from './services/tools';
 
 interface LucyEnv extends Env {
 	OPENAI_API_KEY: string;
 	TURNSTILE_SECRET_KEY: string;
 	LUCY_ANALYTICS: AnalyticsEngineDataset;
+	RESEND_API_KEY: string;
+	RESEND_TO_EMAIL: string;
 }
 
 export default {
@@ -79,8 +82,14 @@ export default {
 				}
 			}
 
+			// Both must actually be set at runtime — a Cloudflare secret that was
+			// never `wrangler secret put` is `undefined` despite the string type.
+			// Falls back to log-only lead capture if either is missing.
+			const resendConfig: ResendConfig | undefined =
+				env.RESEND_API_KEY && env.RESEND_TO_EMAIL ? { apiKey: env.RESEND_API_KEY, toEmail: env.RESEND_TO_EMAIL } : undefined;
+
 			// Non-POST methods fall through to handleChatRequest, which returns 405.
-			return handleChatRequest(request, env.OPENAI_API_KEY, env.TURNSTILE_SECRET_KEY, env.LUCY_ANALYTICS);
+			return handleChatRequest(request, env.OPENAI_API_KEY, env.TURNSTILE_SECRET_KEY, resendConfig, env.LUCY_ANALYTICS);
 		}
 
 		return jsonResponse({ error: 'Not found' }, request, 404);

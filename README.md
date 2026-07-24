@@ -161,11 +161,18 @@ callers just see a (slightly slower) reply that used real data.
   discover new pages on its own; if the site adds more pages worth exposing,
   add them to `SITE_PAGES` in [src/services/tools.ts](src/services/tools.ts).
 - **`contact_scott`**: records a visitor's message and optional contact
-  method when they want to get in touch. Currently **log-only** — it writes
-  a structured `lead_captured` event visible via `wrangler tail` or the
-  Cloudflare dashboard's Logs view. There is no active notification (email,
-  etc.) wired up yet, so leads have to be checked manually; the prompt is
-  written to avoid Lucy claiming otherwise.
+  method when they want to get in touch. Always writes a structured
+  `lead_captured` event (visible via `wrangler tail`, the Cloudflare
+  dashboard's Logs view, or queried after the fact — see Debugging below) —
+  that's the guaranteed record. If `RESEND_API_KEY` and `RESEND_TO_EMAIL`
+  are both set, it additionally sends an email notification via
+  [Resend](https://resend.com) (`makeToolExecutor` in
+  [src/services/tools.ts](src/services/tools.ts)); if either secret is
+  missing, or the send fails for any reason, it silently falls back to
+  log-only — a broken/unconfigured email send never affects what Lucy tells
+  the visitor. The "from" address (`lucy@mail.uvw.io`) is on a subdomain
+  dedicated to this — see the DNS setup notes in git history if it ever
+  needs re-verifying with Resend.
 
 Each tool round-trip costs an extra `responses.create` call; a single chat
 turn is capped at `MAX_TOOL_ROUNDS` (4) round-trips
@@ -230,6 +237,8 @@ Set via `wrangler secret put <NAME>` — never committed, never stored in
 | ----------------------- | ------------------------------------------------------ |
 | `OPENAI_API_KEY`        | Calling the OpenAI Responses API                       |
 | `TURNSTILE_SECRET_KEY`  | Verifying Turnstile tokens against Cloudflare's siteverify API |
+| `RESEND_API_KEY`        | Sending `contact_scott` lead notification emails. Optional — falls back to log-only if unset. |
+| `RESEND_TO_EMAIL`       | Destination address for lead notifications. Optional, same fallback. |
 
 ## Debugging: what happened to a specific request
 

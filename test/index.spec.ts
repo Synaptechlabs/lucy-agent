@@ -233,6 +233,7 @@ describe('Lucy Worker', () => {
 			'test-api-key',
 			'test-turnstile-secret',
 			undefined,
+			undefined,
 			fakeReplyStreamer,
 			alwaysVerified,
 		);
@@ -276,6 +277,7 @@ describe('Lucy Worker', () => {
 			'test-api-key',
 			'test-turnstile-secret',
 			undefined,
+			undefined,
 			fakeReplyStreamer,
 			alwaysVerified,
 		);
@@ -316,7 +318,7 @@ describe('Lucy Worker', () => {
 			body: JSON.stringify({ message: 'Hello' }),
 		});
 
-		await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', analytics);
+		await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, analytics);
 
 		expect(writeDataPoint).toHaveBeenCalledWith(expect.objectContaining({ indexes: ['missing_turnstile_token'] }));
 	});
@@ -332,7 +334,15 @@ describe('Lucy Worker', () => {
 			body: JSON.stringify({ message: 'Hello', turnstileToken: 'bad-token' }),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, undefined, neverVerified);
+		const response = await handleChatRequest(
+			request,
+			'test-api-key',
+			'test-turnstile-secret',
+			undefined,
+			undefined,
+			undefined,
+			neverVerified,
+		);
 		const body = (await response.json()) as { error: string };
 
 		expect(response.status).toBe(403);
@@ -352,7 +362,15 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, undefined, alwaysVerified);
+		const response = await handleChatRequest(
+			request,
+			'test-api-key',
+			'test-turnstile-secret',
+			undefined,
+			undefined,
+			undefined,
+			alwaysVerified,
+		);
 		const body = (await response.json()) as {
 			error: string;
 		};
@@ -374,7 +392,15 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, undefined, alwaysVerified);
+		const response = await handleChatRequest(
+			request,
+			'test-api-key',
+			'test-turnstile-secret',
+			undefined,
+			undefined,
+			undefined,
+			alwaysVerified,
+		);
 		const body = (await response.json()) as { error: string };
 
 		expect(response.status).toBe(400);
@@ -395,7 +421,15 @@ describe('Lucy Worker', () => {
 			}),
 		});
 
-		const response = await handleChatRequest(request, 'test-api-key', 'test-turnstile-secret', undefined, undefined, alwaysVerified);
+		const response = await handleChatRequest(
+			request,
+			'test-api-key',
+			'test-turnstile-secret',
+			undefined,
+			undefined,
+			undefined,
+			alwaysVerified,
+		);
 		const body = (await response.json()) as { error: string };
 
 		expect(response.status).toBe(400);
@@ -424,6 +458,7 @@ describe('Lucy Worker', () => {
 			request,
 			'test-api-key',
 			'test-turnstile-secret',
+			undefined,
 			undefined,
 			fakeReplyStreamer,
 			alwaysVerified,
